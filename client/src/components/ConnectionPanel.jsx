@@ -1,63 +1,69 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import io from "socket.io-client";
 import Peer from "simple-peer";
 
 const socket = io("http://localhost:5000");
 
-let peer = null;
-
 export default function ConnectionPanel({ onFileSend }) {
   const [roomID, setRoomID] = useState("");
-  const [otherUserID, setOtherUserID] = useState(null);
   const [status, setStatus] = useState("");
+  const [otherUserID, setOtherUserID] = useState(null);
+  const peerRef = useRef(null); // useRef instead of let
 
   useEffect(() => {
     socket.on("other-user", (userID) => {
       setOtherUserID(userID);
-      setStatus("Other user joined. You are the initiator.");
-      initPeer(true, userID); // Initiator sends offer
+      setStatus("Other user in room. You're the initiator.");
+      initPeer(true, userID); // initiator
     });
 
-    socket.on("user-joined", (newUserID) => {
-      setOtherUserID(newUserID);
-      setStatus("User joined. You are the responder.");
-      initPeer(false, newUserID); // Responder receives offer
+    socket.on("user-joined", (userID) => {
+      setOtherUserID(userID);
+      setStatus("You joined second. Waiting for signal...");
+      // Don’t initPeer yet. Wait until offer is received.
     });
 
     socket.on("receive-signal", ({ signal, senderID }) => {
-      if (peer) {
-        peer.signal(signal);
-      } else {
-        console.warn("Peer not ready yet, cannot signal.");
+      if (!peerRef.current) {
+        initPeer(false, senderID); // non-initiator creates peer on receiving offer
       }
+
+      try {
+        peerRef.current.signal(signal);
+      } catch (err) {
+        console.error("Signal error:", err);
+      }
+    });
+
+    socket.on("peer-connected", () => {
+      setStatus("✅ Peer connection established!");
     });
 
     return () => {
       socket.off("other-user");
       socket.off("user-joined");
       socket.off("receive-signal");
-      if (peer) {
-        peer.destroy();
-        peer = null;
+      socket.off("peer-connected");
+      if (peerRef.current) {
+        peerRef.current.destroy();
+        peerRef.current = null;
       }
     };
   }, []);
 
-  function initPeer(initiator, userID) {
-    peer = new Peer({
-      initiator,
-      trickle: false,
-    });
+  function initPeer(initiator, targetID) {
+    const peer = new Peer({ initiator, trickle: false });
 
-    peer.on("signal", (data) => {
+    peer.on("signal", (signalData) => {
       socket.emit("send-signal", {
-        targetID: userID,
-        signal: data,
+        targetID,
+        signal: signalData,
       });
     });
 
     peer.on("connect", () => {
-      setStatus("Peer connection established!");
+      setStatus("🎉 Connected to peer");
+      socket.emit("peer-connected", { targetID });
     });
 
     peer.on("data", (data) => {
@@ -74,9 +80,11 @@ export default function ConnectionPanel({ onFileSend }) {
       setStatus(`Peer error: ${err.message}`);
     });
 
+    peerRef.current = peer;
+
     onFileSend(() => (file) => {
-      if (peer && peer.connected) {
-        peer.send(file);
+      if (peerRef.current && peerRef.current.connected) {
+        peerRef.current.send(file);
       } else {
         alert("Peer not connected");
       }
