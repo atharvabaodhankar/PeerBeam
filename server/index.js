@@ -24,13 +24,20 @@ io.on("connection", (socket) => {
     });
   });
 
-  socket.on("join-room", (roomID) => {
+ // Signaling server (Express + Socket.IO)
+ socket.on("join-room", (roomID) => {
     socket.join(roomID);
-    const otherClients = [...io.sockets.adapter.rooms.get(roomID)].filter(id => id !== socket.id);
+    const clients = Array.from(io.sockets.adapter.rooms.get(roomID) || []);
+    const otherClients = clients.filter(id => id !== socket.id);
+  
     if (otherClients.length > 0) {
-      socket.emit("other-user", otherClients[0]);
+      // Notify both clients who the other user is
+      socket.emit("other-user", otherClients[0]); // new user gets info of existing user
+      io.to(otherClients[0]).emit("user-joined", socket.id); // existing user gets info of new user
     }
   });
+  
+  
 
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);

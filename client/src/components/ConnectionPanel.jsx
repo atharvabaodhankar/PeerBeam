@@ -4,30 +4,38 @@ import Peer from "simple-peer";
 
 const socket = io("http://localhost:5000");
 
-let peer;
+let peer = null;
 
 export default function ConnectionPanel({ onFileSend }) {
   const [roomID, setRoomID] = useState("");
   const [otherUserID, setOtherUserID] = useState(null);
+  const [status, setStatus] = useState("");
 
   useEffect(() => {
-    const handleOtherUser = (userID) => {
+    socket.on("other-user", (userID) => {
       setOtherUserID(userID);
-      initPeer(true, userID); // if you are initiator
-    };
-    const handleReceiveSignal = ({ signal, senderID }) => {
-      if (!peer) {
-        initPeer(false, senderID);
-      }
-      if (peer && !peer.destroyed) {
+      setStatus("Other user joined. You are the initiator.");
+      initPeer(true, userID); // Initiator sends offer
+    });
+
+    socket.on("user-joined", (newUserID) => {
+      setOtherUserID(newUserID);
+      setStatus("User joined. You are the responder.");
+      initPeer(false, newUserID); // Responder receives offer
+    });
+
+    socket.on("receive-signal", ({ signal, senderID }) => {
+      if (peer) {
         peer.signal(signal);
+      } else {
+        console.warn("Peer not ready yet, cannot signal.");
       }
-    };
-    socket.on("other-user", handleOtherUser);
-    socket.on("receive-signal", handleReceiveSignal);
+    });
+
     return () => {
-      socket.off("other-user", handleOtherUser);
-      socket.off("receive-signal", handleReceiveSignal);
+      socket.off("other-user");
+      socket.off("user-joined");
+      socket.off("receive-signal");
       if (peer) {
         peer.destroy();
         peer = null;
@@ -49,17 +57,21 @@ export default function ConnectionPanel({ onFileSend }) {
     });
 
     peer.on("connect", () => {
-      console.log("Peer connection established!");
+      setStatus("Peer connection established!");
     });
 
     peer.on("data", (data) => {
-      // Receive file data
       const blob = new Blob([data]);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = "received-file";
       a.click();
+    });
+
+    peer.on("error", (err) => {
+      console.error("Peer error:", err);
+      setStatus(`Peer error: ${err.message}`);
     });
 
     onFileSend(() => (file) => {
@@ -74,6 +86,7 @@ export default function ConnectionPanel({ onFileSend }) {
   function joinRoom() {
     if (roomID) {
       socket.emit("join-room", roomID);
+      setStatus(`Joined room: ${roomID}`);
     }
   }
 
@@ -86,6 +99,8 @@ export default function ConnectionPanel({ onFileSend }) {
         placeholder="Enter room ID"
       />
       <button onClick={joinRoom}>Join Room</button>
+      {status && <p>{status}</p>}
+      {otherUserID && <p>Connected to: {otherUserID}</p>}
     </div>
   );
 }
