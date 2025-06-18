@@ -11,17 +11,28 @@ export default function ConnectionPanel({ onFileSend }) {
   const [otherUserID, setOtherUserID] = useState(null);
 
   useEffect(() => {
-    socket.on("other-user", (userID) => {
+    const handleOtherUser = (userID) => {
       setOtherUserID(userID);
       initPeer(true, userID); // if you are initiator
-    });
-
-    socket.on("receive-signal", ({ signal, senderID }) => {
+    };
+    const handleReceiveSignal = ({ signal, senderID }) => {
       if (!peer) {
         initPeer(false, senderID);
       }
-      peer.signal(signal);
-    });
+      if (peer && !peer.destroyed) {
+        peer.signal(signal);
+      }
+    };
+    socket.on("other-user", handleOtherUser);
+    socket.on("receive-signal", handleReceiveSignal);
+    return () => {
+      socket.off("other-user", handleOtherUser);
+      socket.off("receive-signal", handleReceiveSignal);
+      if (peer) {
+        peer.destroy();
+        peer = null;
+      }
+    };
   }, []);
 
   function initPeer(initiator, userID) {
